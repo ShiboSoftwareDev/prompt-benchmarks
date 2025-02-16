@@ -7,6 +7,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     steps:
       - name: Checkout code
@@ -22,5 +24,3 @@ jobs:
 
       - name: Run tests
         run: bun test --timeout 50000
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
