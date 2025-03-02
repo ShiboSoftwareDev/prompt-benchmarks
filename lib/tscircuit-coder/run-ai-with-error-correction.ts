@@ -2,15 +2,12 @@ import { askAiWithPreviousAttempts } from "../ask-ai/ask-ai-with-previous-attemp
 import { saveAttemptLog } from "lib/utils/save-attempt"
 import type OpenAI from "openai"
 import { evaluateTscircuitCode } from "../utils/evaluate-tscircuit-code"
-import { getPrimarySourceCodeFromVfs } from "lib/utils/get-primary-source-code-from-vfs"
 
 const createAttemptFile = ({
-  fileName,
   prompt,
   code,
   error,
 }: {
-  fileName: string
   prompt: string
   code: string
   error: string
@@ -37,104 +34,107 @@ interface AttemptHistory {
   error: string
 }
 
-export const runAiWithErrorCorrection = async ({
-  attempt = 1,
-  maxAttempts,
-  logsDir,
-  systemPrompt,
-  prompt,
-  promptNumber,
-  previousAttempts = [],
-  onStream,
-  onVfsChanged,
-  vfs,
-  openaiClient,
-}: {
-  attempt?: number
-  logsDir?: string
-  maxAttempts: number
-  prompt: string
-  systemPrompt: string
-  promptNumber: number
-  previousAttempts?: AttemptHistory[]
-  onStream?: (chunk: string) => void
-  onVfsChanged?: () => void
-  vfs?: Record<string, string>
-  openaiClient?: OpenAI
-}): Promise<{
+export const runAiWithErrorCorrection = async (
+  options: {
+    maxAttempts: number
+    promptId: number
+    logsDir?: string
+    prompt: string
+    systemPrompt: string
+    onStream?: (chunk: string) => void
+    onVfsChanged?: () => void
+  },
+  context: {
+    vfs?: Record<string, string>
+    openaiClient?: OpenAI
+  } = {},
+): Promise<{
   code: string
   codeBlock: string
   error: string
 }> => {
-  const aiResponse = await askAiWithPreviousAttempts({
-    prompt,
-    systemPrompt,
-    vfs,
-    previousAttempts,
-    onStream,
-    openaiClient,
-  })
-  const codeMatch = aiResponse.match(/```tsx\s*([\s\S]*?)\s*```/)
-  const code = codeMatch ? codeMatch[1].trim() : ""
-  const codeBlockMatch = aiResponse.match(/```tsx[\s\S]*?```/)
-  const codeBlock = codeBlockMatch ? codeBlockMatch[0] : ""
-
-  const { success, error: evaluationError } = await evaluateTscircuitCode(code)
-
-  if (success) {
-    if (onStream) onStream("Local tscircuit circuit created")
-    return { code, codeBlock, error: "" }
-  }
-
-  const error = evaluationError || ""
-  previousAttempts.push({ code, error })
-  const attemptFileName = `prompt-${promptNumber}-attempt-${attempt}.md`
-  if (logsDir)
-    saveAttemptLog({
-      fileName: `prompt-${promptNumber}-attempt-${attempt}.md`,
-      prompt,
-      logsDir,
-      code,
-      error,
-    })
-  if (vfs) {
-    const attemptFileContent = createAttemptFile({
-      fileName: attemptFileName,
-      prompt,
-      code,
-      error,
-    })
-    vfs[attemptFileName] = attemptFileContent
-  }
-  attempt++
-  if (onVfsChanged) onVfsChanged()
-
-  if (attempt >= maxAttempts) {
-    if (onStream)
-      onStream(
-        `Maximum attempts reached, Latest attempt circuit evalution error: ${previousAttempts[previousAttempts.length - 1].error || ""}`,
-      )
-
-    return {
-      code,
-      codeBlock,
-      error: previousAttempts[previousAttempts.length - 1].error || "",
-    }
-  }
-  if (onStream)
-    onStream(
-      `Circuit evaluation error: ${previousAttempts[previousAttempts.length - 1].error || ""}`,
-    )
-  return await runAiWithErrorCorrection({
-    attempt,
-    onStream,
-    onVfsChanged,
+  const {
     maxAttempts,
     logsDir,
-    systemPrompt,
     prompt,
-    promptNumber,
-    previousAttempts,
-    vfs,
-  })
+    systemPrompt,
+    promptId,
+    onStream,
+    onVfsChanged,
+  } = options
+  const { vfs, openaiClient } = context
+
+  const attempt = async (
+    attemptNumber: number,
+    previousAttempts: AttemptHistory[],
+  ): Promise<{
+    code: string
+    codeBlock: string
+    error: string
+  }> => {
+    const aiResponse = await askAiWithPreviousAttempts(
+      {
+        prompt,
+        systemPrompt,
+        previousAttempts,
+        onStream,
+      },
+      {
+        vfs,
+        openaiClient,
+      },
+    )
+    const codeMatch = aiResponse.match(/```tsx\s*([\s\S]*?)\s*```/)
+    const code = codeMatch ? codeMatch[1].trim() : ""
+    const codeBlockMatch = aiResponse.match(/```tsx[\s\S]*?```/)
+    const codeBlock = codeBlockMatch ? codeBlockMatch[0] : ""
+
+    const { success, error: evaluationError } =
+      await evaluateTscircuitCode(code)
+
+    if (success) {
+      if (onStream) onStream("Local tscircuit circuit created")
+      return { code, codeBlock, error: "" }
+    }
+
+    const error = evaluationError || ""
+    previousAttempts.push({ code, error })
+    const attemptFileName = `prompt-${promptId}-attempt-${attemptNumber}.md`
+    if (logsDir)
+      saveAttemptLog({
+        fileName: attemptFileName,
+        prompt,
+        logsDir,
+        code,
+        error,
+      })
+    if (vfs) {
+      const attemptFileContent = createAttemptFile({
+        prompt,
+        code,
+        error,
+      })
+      vfs[attemptFileName] = attemptFileContent
+    }
+    if (onVfsChanged) onVfsChanged()
+
+    if (attemptNumber >= maxAttempts) {
+      if (onStream)
+        onStream(
+          `Maximum attempts reached, Latest attempt circuit evaluation error: ${previousAttempts[previousAttempts.length - 1].error || ""}`,
+        )
+      return {
+        code,
+        codeBlock,
+        error: previousAttempts[previousAttempts.length - 1].error || "",
+      }
+    }
+    if (onStream)
+      onStream(
+        `Circuit evaluation error: ${previousAttempts[previousAttempts.length - 1].error || ""}`,
+      )
+    return await attempt(attemptNumber + 1, previousAttempts)
+  }
+
+  return attempt(1, [])
 }

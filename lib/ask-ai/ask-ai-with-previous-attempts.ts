@@ -6,21 +6,20 @@ interface AttemptHistory {
   error: string
 }
 
-export const askAiWithPreviousAttempts = async ({
-  prompt,
-  systemPrompt,
-  vfs,
-  previousAttempts,
-  onStream,
-  openaiClient,
-}: {
-  prompt: string
-  systemPrompt: string
-  vfs?: Record<string, string>
-  previousAttempts?: AttemptHistory[]
-  onStream?: (chunk: string) => void
-  openaiClient?: typeof openai
-}): Promise<string> => {
+export const askAiWithPreviousAttempts = async (
+  options: {
+    prompt: string
+    systemPrompt: string
+    previousAttempts?: AttemptHistory[]
+    onStream?: (chunk: string) => void
+  },
+  context: {
+    vfs?: Record<string, string>
+    openaiClient?: typeof openai
+  },
+): Promise<string> => {
+  let { vfs, openaiClient } = context
+  const { prompt, systemPrompt, previousAttempts, onStream } = options
   const client = openaiClient || openai
   const messages: { role: "assistant" | "user" | "system"; content: string }[] =
     [
